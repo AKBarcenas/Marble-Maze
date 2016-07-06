@@ -7,6 +7,7 @@
 //
 
 import SpriteKit
+import CoreMotion
 
 enum CollisionTypes: UInt32 {
     case Player = 1
@@ -16,7 +17,34 @@ enum CollisionTypes: UInt32 {
     case Finish = 16
 }
 
-class GameScene: SKScene {
+class GameScene: SKScene, SKPhysicsContactDelegate {
+    // Represents the user in the game.
+    var player: SKSpriteNode!
+    // The last position that the user touched.
+    var lastTouchPosition: CGPoint?
+    // Manages motion detected in the device.
+    var motionManager: CMMotionManager!
+    
+    // The label that displays the user's score.
+    var scoreLabel: SKLabelNode!
+    
+    // Keeps track of the user's score.
+    var score: Int = 0 {
+        didSet {
+            scoreLabel.text = "Score: \(score)"
+        }
+    }
+    
+    // Keeps track of the game's ending status.
+    var gameOver = false
+    
+    /*
+     * Function Name: didMoveToView
+     * Parameters: contact - the contact that occurred.
+     * Purpose: This method handles when two objects come into conact.
+     * Return Value: None
+     */
+    
     override func didMoveToView(view: SKView) {
         let background = SKSpriteNode(imageNamed: "background.jpg")
         background.position = CGPoint(x: 512, y: 384)
@@ -24,15 +52,107 @@ class GameScene: SKScene {
         background.zPosition = -1
         addChild(background)
         
+        scoreLabel = SKLabelNode(fontNamed: "Chalkduster")
+        scoreLabel.text = "Score: 0"
+        scoreLabel.horizontalAlignmentMode = .Left
+        scoreLabel.position = CGPoint(x: 16, y: 16)
+        addChild(scoreLabel)
+        
+        physicsWorld.contactDelegate = self
+        
+        physicsWorld.gravity = CGVector(dx: 0, dy: 0)
+        
+        motionManager = CMMotionManager()
+        motionManager.startAccelerometerUpdates()
+        
         loadLevel()
+        createPlayer()
     }
     
+    /*
+     * Function Name: touchesBegan
+     * Parameters: touches - the touches that occurred at the beginning of the event.
+     *   event - the event that represents the touches.
+     * Purpose: This method updates the last position that the user touched.
+     * Return Value: None
+     */
+    
     override func touchesBegan(touches: Set<UITouch>, withEvent event: UIEvent?) {
+        if let touch = touches.first {
+            let location = touch.locationInNode(self)
+            lastTouchPosition = location
+        }
+    }
+    
+    /*
+     * Function Name: touchesMoved
+     * Parameters: touches - the touches that occurred during the event.
+     *   event - the event that represents the touches.
+     * Purpose: This method updates the last position that the user touched.
+     * Return Value: None
+     */
+    
+    override func touchesMoved(touches: Set<UITouch>, withEvent event: UIEvent?) {
+        if let touch = touches.first {
+            let location = touch.locationInNode(self)
+            lastTouchPosition = location
+        }
+    }
+    
+    /*
+     * Function Name: touchesEnded
+     * Parameters: touches - the touches that occurred at the end of the event.
+     *   event - the event that represents the touches.
+     * Purpose: This method resets the last place the user touched when the touches end.
+     * Return Value: None
+     */
+    
+    override func touchesEnded(touches: Set<UITouch>, withEvent event: UIEvent?) {
+        lastTouchPosition = nil
+    }
+    
+    /*
+     * Function Name: touchesCancelled
+     * Parameters: touches - the touches that occurred when the event cancelled.
+     *   event - the event that represents the touches.
+     * Purpose: This method resets the last place the user touched when the touches were cancelled.
+     * Return Value: None
+     */
+    
+    override func touchesCancelled(touches: Set<UITouch>?, withEvent event: UIEvent?) {
+        lastTouchPosition = nil
     }
    
+    /*
+     * Function Name: update
+     * Parameters: currentTime - the current system time.
+     * Purpose: This method updates the gravity inside the game depending on the last user's touch position
+     *   or the tilt applied to the device by the user as long as the game is not over.
+     * Return Value: None
+     */
+    
     override func update(currentTime: CFTimeInterval) {
-        /* Called before each frame is rendered */
+        if !gameOver {
+            #if (arch(i386) || arch(x86_64))
+                if let currentTouch = lastTouchPosition {
+                    let diff = CGPoint(x: currentTouch.x - player.position.x, y: currentTouch.y - player.position.y)
+                    physicsWorld.gravity = CGVector(dx: diff.x / 100, dy: diff.y / 100)
+                }
+            #else
+                if let accelerometerData = motionManager.accelerometerData {
+                    physicsWorld.gravity = CGVector(dx: accelerometerData.acceleration.y * -50, dy: accelerometerData.acceleration.x * 50)
+                }
+            #endif
+        }
     }
+    
+    /*
+     * Function Name: loadLevel
+     * Parameters: None
+     * Purpose: This method loads the current level based on the text file that describes the layout of
+     *   the level.
+     * Return Value: None
+     */
     
     func loadLevel() {
         if let levelPath = NSBundle.mainBundle().pathForResource("level1", ofType: "txt") {
@@ -95,6 +215,76 @@ class GameScene: SKScene {
                     }
                 }
             }
+        }
+    }
+    
+    /*
+     * Function Name: createPlayer
+     * Parameters: None
+     * Purpose: This method creates the object representing the player and displays it.
+     * Return Value: None
+     */
+    
+    func createPlayer() {
+        player = SKSpriteNode(imageNamed: "player")
+        player.position = CGPoint(x: 96, y: 672)
+        player.physicsBody = SKPhysicsBody(circleOfRadius: player.size.width / 2)
+        player.physicsBody!.allowsRotation = false
+        player.physicsBody!.linearDamping = 0.5
+        
+        player.physicsBody!.categoryBitMask = CollisionTypes.Player.rawValue
+        player.physicsBody!.contactTestBitMask = CollisionTypes.Star.rawValue | CollisionTypes.Vortex.rawValue | CollisionTypes.Finish.rawValue
+        player.physicsBody!.collisionBitMask = CollisionTypes.Wall.rawValue
+        addChild(player)
+    }
+    
+    /*
+     * Function Name: didBeginContact
+     * Parameters: contact - the contact that occurred.
+     * Purpose: This method handles when two objects come into conact.
+     * Return Value: None
+     */
+    
+    func didBeginContact(contact: SKPhysicsContact) {
+        if contact.bodyA.node == player {
+            playerCollidedWithNode(contact.bodyB.node!)
+        }
+        
+        else if contact.bodyB.node == player {
+            playerCollidedWithNode(contact.bodyA.node!)
+        }
+    }
+    
+    /*
+     * Function Name: playerCollidedWithNode
+     * Parameters: node - the node that was collided with.
+     * Purpose: This method handles when the player comes into contact with different types on nodes.
+     * Return Value: None
+     */
+    
+    func playerCollidedWithNode(node: SKNode) {
+        if node.name == "vortex" {
+            player.physicsBody!.dynamic = false
+            gameOver = true
+            score -= 1
+            
+            let move = SKAction.moveTo(node.position, duration: 0.25)
+            let scale = SKAction.scaleTo(0.0001, duration: 0.25)
+            let remove = SKAction.removeFromParent()
+            let sequence = SKAction.sequence([move, scale, remove])
+            
+            player.runAction(sequence) { [unowned self] in
+                self.createPlayer()
+                self.gameOver = false
+            }
+        }
+        
+        else if node.name == "star" {
+            node.removeFromParent()
+            score += 1
+        }
+        
+        else if node.name == "finish" {
         }
     }
 }
